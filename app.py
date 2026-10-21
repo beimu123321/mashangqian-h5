@@ -945,10 +945,11 @@ def serve_help():
 def serve_landing():
     """网站主界面：产品介绍（网页版 / APP版）"""
     try:
-        import html as _html
+        import re as _re
         html = open(os.path.join(ROOT, "landing.html"), encoding="utf-8").read()
-        site_name = _html.escape(SETTINGS.get("site_name", "马上签") or "马上签")
-        html = html.replace("<title>马上签</title>", f"<title>{site_name}</title>", 1)
+        site_name = (SETTINGS.get("site_name", "马上签") or "马上签").strip()
+        if site_name and site_name != "马上签":
+            html = _re.sub(r"<title>马上签[^<]*</title>", f"<title>{site_name}</title>", html, count=1)
         return html
     except OSError:
         abort(404)

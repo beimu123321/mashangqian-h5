@@ -413,7 +413,7 @@ export default function App() {
             </>
           ) : <Spin tip={qrStatus} />}
           <Alert type="info" showIcon style={{ marginTop: 16, textAlign: 'left' }}
-            message="用学习通 App 扫描二维码登录。仅自动完成【普通签到】，其他类型会提醒你手动完成。" />
+            message="用学习通 App 扫描二维码登录。绑定后普通、手势、签到码、位置签到自动完成，二维码与拍照签到将提醒你处理。" />
         </div>
       </Modal>
 
