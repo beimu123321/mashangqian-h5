@@ -36,7 +36,13 @@ raw_env = [
     'ADMIN_PASSWORD=change-me',
     'SMTP_USER=yourname@qq.com',
     'SMTP_PASS=your-smtp-auth-code',
+    # 工单提醒收件邮箱（可选，不配则用代码默认值）
+    'TICKET_NOTIFY_EMAIL=yourname@qq.com',
 ]
+
+# worker 启动超时：账号较多时 core.boot() 顺序恢复登录态可能超过默认 30s，
+# 过小会导致 worker 启动即被 kill（ crash loop ），按账号量调大
+timeout = 300
 
 # 访问日志与错误日志路径
 accesslog = '/www/wwwlogs/python/your-project/gunicorn_access.log'
