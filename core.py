@@ -110,6 +110,10 @@ SMTP_USER = os.environ.get("SMTP_USER", "")
 # 邮件授权码：请通过环境变量 SMTP_PASS 提供，不要写死在代码里
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 
+# 工单提醒收件邮箱：收到新工单或用户回复时，自动发送邮件提醒到此邮箱
+# 可用环境变量 TICKET_NOTIFY_EMAIL 覆盖（生产环境在 gunicorn_conf.py 的 raw_env 中注入）
+TICKET_NOTIFY_EMAIL = os.environ.get("TICKET_NOTIFY_EMAIL", "535919101@qq.com")
+
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -618,6 +622,23 @@ def send_notify(username, subject, html, text="", serverchan_key=""):
         serverchan_send(serverchan_key, subject, text or _html_to_text(html))
     if not email and not serverchan_key:
         log(f"未绑定QQ邮箱，跳过通知: {subject}", "warn", username)
+
+
+def send_ticket_notify(subject, content):
+    """工单事件邮件提醒：异步发送到 TICKET_NOTIFY_EMAIL，失败仅记日志，不影响工单主流程。"""
+    subject = " ".join(str(subject or "").split())[:120] or "马上签工单提醒"
+
+    def _go():
+        try:
+            ok, err = send_email(TICKET_NOTIFY_EMAIL, f"【马上签】{subject}",
+                                 email_page("工单提醒", content))
+            if not ok:
+                log(f"工单提醒邮件发送失败[{TICKET_NOTIFY_EMAIL}]: {err}", "warn")
+            else:
+                log(f"工单提醒邮件已发送[{TICKET_NOTIFY_EMAIL}]: {subject}", "info")
+        except Exception as e:
+            log(f"工单提醒邮件发送异常: {e}", "warn")
+    threading.Thread(target=_go, daemon=True).start()
 
 
 # ---------------- 单条学习通账号 ----------------
@@ -1455,6 +1476,14 @@ class TicketStore:
             self.tickets.append(t)
             self._save()
         log(f"用户 {uid} 提交工单 #{tid}: {subject}", "info", uid)
+        send_ticket_notify(
+            f"新工单 #{tid}：{subject}",
+            f"用户 {uid} 提交了新工单，请及时处理。\n\n"
+            f"工单编号：#{tid}\n"
+            f"问题类型：{self.LABEL_CATEGORY.get(category, category)}\n"
+            f"提交时间：{t['created_at']}\n\n"
+            f"工单内容：\n{content}\n\n"
+            f"后台处理入口：{SITE_BASE}/admin")
         return t, ""
 
     def get(self, tid):
@@ -1493,6 +1522,14 @@ class TicketStore:
             if role == "admin" and t["status"] == self.STATUS_OPEN:
                 t["status"] = self.STATUS_PROGRESS
             self._save()
+        if role == "user":
+            send_ticket_notify(
+                f"工单 #{tid} 有新回复",
+                f"用户 {from_uid} 回复了工单「{t['subject']}」，请及时查看。\n\n"
+                f"工单编号：#{tid}\n"
+                f"回复时间：{t['updated_at']}\n\n"
+                f"回复内容：\n{message}\n\n"
+                f"后台处理入口：{SITE_BASE}/admin")
         return True, ""
 
     def set_status(self, tid, status=None, priority=None):

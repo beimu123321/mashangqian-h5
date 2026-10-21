@@ -100,6 +100,7 @@ gunicorn -c gunicorn_conf.py app:app
 | `ADMIN_PASSWORD` | 后台管理员密码 | 是 |
 | `SMTP_HOST` / `SMTP_PORT` | QQ 邮箱 SMTP 服务器与端口 | 邮件通知开启时 |
 | `SMTP_USER` / `SMTP_PASS` | 发件邮箱与授权码 | 邮件通知开启时 |
+| `TICKET_NOTIFY_EMAIL` | 工单提醒收件邮箱，收到新工单/用户回复时自动发信，默认 `535919101@qq.com` | 否 |
 | `PORT` | 服务端口，默认 `8765` | 否 |
 
 ## 开发
