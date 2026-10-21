@@ -1,0 +1,5 @@
+flask>=3.0
+requests>=2.28
+gunicorn>=21.2
+# 可选：手机验证码登录的浏览器辅助窗口需要
+# playwright>=1.40

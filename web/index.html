@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>学习通自动签到助手</title>
+<style>
+:root{
+  --bg:#f3f5f9; --card:#ffffff; --line:#e6eaf1; --txt:#1f2733; --sub:#7b8595;
+  --blue:#3b7cff; --blue-d:#2f66d8; --green:#18a058; --red:#d93838; --orange:#e8890c;
+  --radius:14px; --shadow:0 2px 12px rgba(31,45,61,.07);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 26px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+.brand{font-size:18px;font-weight:700;display:flex;align-items:center;gap:9px}
+.brand .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#3b7cff,#7a5cff);color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px}
+.badge{font-size:12px;padding:4px 11px;border-radius:99px;font-weight:600}
+.badge.ok{background:#e5f7ec;color:var(--green)} .badge.no{background:#fdeaea;color:var(--red)}
+.wrap{max-width:1080px;margin:0 auto;padding:22px 18px 60px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:18px}
+h3{font-size:15px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between}
+h3 .mini{font-size:12px;color:var(--sub);font-weight:400}
+button{cursor:pointer;border:none;border-radius:9px;font-size:14px;padding:9px 18px;font-weight:600;transition:.15s}
+.btn-p{background:var(--blue);color:#fff}.btn-p:hover{background:var(--blue-d)}
+.btn-g{background:#eef2f8;color:var(--txt)}.btn-g:hover{background:#e2e8f2}
+.btn-danger{background:#fdeaea;color:var(--red)}
+.btn-sm{padding:5px 12px;font-size:12.5px;border-radius:7px}
+button:disabled{opacity:.5;cursor:not-allowed}
+input[type=text],input[type=number],input[type=password]{border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:14px;width:100%;outline:none;transition:.15s}
+input:focus{border-color:var(--blue)}
+label{font-size:13px;color:var(--sub);display:block;margin:12px 0 6px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.row>div{flex:1;min-width:180px}
+/* 登录页 */
+.login-box{max-width:430px;margin:40px auto}
+.tabs{display:flex;gap:6px;background:#eef1f6;padding:5px;border-radius:11px;margin-bottom:20px}
+.tabs button{flex:1;background:transparent;color:var(--sub);padding:9px;border-radius:8px;font-weight:600}
+.tabs button.on{background:#fff;color:var(--txt);box-shadow:0 1px 5px rgba(0,0,0,.08)}
+.qr-wrap{text-align:center;padding:8px 0}
+.qr-wrap img{width:210px;height:210px;border-radius:10px;border:1px solid var(--line)}
+.qr-status{margin-top:12px;font-size:13.5px;color:var(--sub);min-height:20px}
+.qr-status.hot{color:var(--blue);font-weight:600}
+.tip{font-size:12.5px;color:var(--sub);line-height:1.8;margin-top:14px;background:#f7f9fc;border-radius:9px;padding:11px 14px;text-align:left}
+.msg-err{color:var(--red);font-size:13px;margin-top:10px;min-height:18px}
+/* 面板 */
+.grid{display:grid;grid-template-columns:340px 1fr;gap:18px}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.switch{position:relative;width:46px;height:26px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:#cfd6e2;border-radius:99px;transition:.2s;cursor:pointer}
+.slider:before{content:"";position:absolute;width:20px;height:20px;border-radius:50%;background:#fff;top:3px;left:3px;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.switch input:checked+.slider{background:var(--green)}
+.switch input:checked+.slider:before{transform:translateX(20px)}
+.mon-row{display:flex;align-items:center;gap:14px;padding:6px 0 2px}
+.mon-row .st{font-size:15px;font-weight:700}
+.courses{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px}
+.course-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;font-size:13.5px;cursor:pointer}
+.course-item:hover{background:#f5f8fd}
+.course-item input{accent-color:var(--blue)}
+.course-item .cls{color:var(--sub);font-size:12px;margin-left:auto;flex:none}
+.empty{color:var(--sub);font-size:13px;text-align:center;padding:20px 0}
+/* 日志 */
+.logs{background:#10161f;color:#c8d3e0;font-family:Consolas,Menlo,monospace;font-size:12.5px;border-radius:10px;padding:13px 15px;height:320px;overflow:auto;line-height:1.75}
+.logs .t{color:#5f7186;margin-right:8px}
+.logs .l-alert{color:#ffb020}.logs .l-error{color:#ff6b6b}.logs .l-warn{color:#ffd166}
+/* 记录表 */
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--sub);font-weight:600;font-size:12.5px}
+.tag{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}
+.tag.s{background:#e5f7ec;color:var(--green)} .tag.m{background:#fff3e0;color:var(--orange)} .tag.f{background:#fdeaea;color:var(--red)}
+/* 横幅 */
+.banner{display:none;background:linear-gradient(90deg,#fff3e0,#ffe3d8);border:1px solid #f5c98a;color:#8a5200;border-radius:12px;padding:13px 18px;margin-bottom:16px;font-size:14px;font-weight:600}
+.banner.show{display:block}
+.banner button{float:right;margin-top:-4px}
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);background:#1f2733;color:#fff;padding:10px 22px;border-radius:99px;font-size:13.5px;opacity:0;transition:.3s;z-index:99;pointer-events:none}
+.toast.show{opacity:.95}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><div class="logo">签</div>学习通自动签到助手<span style="font-size:12px;color:var(--sub);font-weight:400;margin-left:4px">多用户版 · 仅自动完成普通签到</span></div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span id="userInfo" style="font-size:12.5px;color:var(--sub)"></span>
+    <span id="loginBadge" class="badge no">未登录</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- 手动签到提醒横幅 -->
+  <div id="manualBanner" class="banner"></div>
+
+  <!-- 登录页 -->
+  <div id="loginPage" class="login-box card hidden">
+    <div class="tabs">
+      <button id="tabQr" class="on" onclick="switchTab('qr')">二维码扫码登录</button>
+      <button id="tabSms" onclick="switchTab('sms')">手机验证码登录</button>
+    </div>
+
+    <div id="paneQr">
+      <div class="qr-wrap">
+        <img id="qrImg" alt="二维码" style="display:none">
+        <div id="qrPlaceholder" class="empty">点击下方按钮获取登录二维码</div>
+        <div id="qrStatus" class="qr-status"></div>
+      </div>
+      <div style="text-align:center;margin-top:14px">
+        <button id="qrBtn" class="btn-p" onclick="qrStart()">获取二维码</button>
+      </div>
+      <div class="tip">📌 打开手机<b>学习通 App</b> → 右上角「扫一扫」→ 扫描上方二维码 → 在手机上确认登录。<br>二维码过期会自动刷新，无需手动操作。</div>
+    </div>
+
+    <div id="paneSms" class="hidden">
+      <div style="text-align:center;margin-top:6px">
+        <button id="browserBtn" class="btn-p" onclick="browserLogin()">打开浏览器登录</button>
+        <div id="browserStatus" class="qr-status" style="margin-top:14px"></div>
+      </div>
+      <div class="tip">📱 点击按钮后<b>本机会弹出浏览器窗口</b>并打开学习通登录页：<br>
+        ① 点击「验证码登录」→ 输入手机号 → 点击「获取验证码」<br>
+        ② 完成滑块人机验证（短信接口必须过滑块，无法跳过）<br>
+        ③ 填入收到的验证码并登录<br>
+        ④ 登录成功后程序<b>自动接管会话并关闭窗口</b>，无需其他操作<br><br>
+        ⚠️ 首次使用需安装：<code>pip install playwright && playwright install chromium</code></div>
+    </div>
+    <div id="loginErr" class="msg-err" style="text-align:center"></div>
+  </div>
+
+  <!-- 主面板 -->
+  <div id="panel" class="hidden">
+    <div class="grid">
+      <div>
+        <div class="card">
+          <h3>监控控制</h3>
+          <div class="mon-row">
+            <label class="switch"><input type="checkbox" id="monSwitch" onchange="toggleMonitor()"><span class="slider"></span></label>
+            <div><div class="st" id="monState">监控已停止</div>
+            <div style="font-size:12.5px;color:var(--sub)" id="monSub">开启后自动检测老师发布的签到</div></div>
+          </div>
+          <div id="healthBox" style="margin-top:12px;background:#f7f9fc;border-radius:9px;padding:10px 13px;font-size:12.5px;color:var(--sub);line-height:1.9"></div>
+          <label>检测间隔（秒，建议 ≥30 防限频）</label>
+          <input type="number" id="intervalInput" min="15" max="600">
+          <label>Server 酱 SendKey（微信推送，选填）</label>
+          <input type="password" id="scKeyInput" placeholder="sctapi.ftqq.com 的 SendKey">
+          <div class="row" style="margin-top:14px">
+            <div style="flex:1"><button class="btn-p" style="width:100%" onclick="saveConfig()">保存设置</button></div>
+            <div style="flex:1;min-width:120px"><button class="btn-g" style="width:100%" onclick="testNotify()">测试推送</button></div>
+          </div>
+          <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:12.5px;color:var(--sub)" id="whoami"></span>
+            <button class="btn-danger btn-sm" onclick="logout()">退出登录</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>👥 用户管理 <span class="mini"><a href="javascript:loadUsers()" style="color:var(--blue)">刷新</a></span></h3>
+          <div style="font-size:12.5px;color:var(--sub);margin-bottom:9px">
+            每个人用自己的学习通扫码登录，各自独立监控，互不干扰</div>
+          <div id="userList" class="courses" style="max-height:230px"><div class="empty">加载中...</div></div>
+        </div>
+
+        <div class="card">
+          <h3>监控课程 <span class="mini"><a href="javascript:refreshCourses()" style="color:var(--blue)">刷新列表</a></span></h3>
+          <div style="font-size:12.5px;color:var(--sub);margin-bottom:9px">不勾选任何课程 = 监控全部课程</div>
+          <div id="courseList" class="courses"><div class="empty">加载中...</div></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h3>实时日志 <span class="mini">自动刷新</span></h3>
+          <div id="logs" class="logs"></div>
+        </div>
+        <div class="card">
+          <h3>签到记录 <span class="mini"><a href="javascript:clearRecords()" style="color:var(--blue)">清空</a></span></h3>
+          <table>
+            <thead><tr><th style="width:110px">时间</th><th>课程 / 活动</th><th style="width:80px">类型</th><th style="width:92px">结果</th></tr></thead>
+            <tbody id="recBody"><tr><td colspan="4" class="empty">暂无记录</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+let logSeq = 0, pollTimer = null, logTimer = null, qrTimer = null, brTimer = null;
+
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+async function api(url, opt){const r=await fetch(url,opt);return {status:r.status, data:await r.json().catch(()=>({}))}}
+
+/* ---------- 状态轮询 ---------- */
+async function pollState(){
+  const {data} = await api('/api/state').catch(()=>({data:{}}));
+  if(!data || data.logged_in===undefined) return;
+  renderState(data);
+}
+
+function renderState(st){
+  const badge=document.getElementById('loginBadge');
+  const loginPage=document.getElementById('loginPage'), panel=document.getElementById('panel');
+  if(st.logged_in){
+    badge.className='badge ok'; badge.textContent='已登录 · '+(st.name||'');
+    document.getElementById('userInfo').textContent=
+      `当前: ${st.name||'用户'}（uid ${st.uid}）· 服务已运行 ${fmtDur(st.server_uptime||0)}`;
+    loginPage.classList.add('hidden'); panel.classList.remove('hidden');
+    stopQrPoll(); stopBrPoll();
+    renderMonitor(st); renderCourses(st); renderRecords(st); renderBanner(st); loadUsers();
+    if(!logTimer) startLogPoll();
+    if(!pollCoursesFlag && !st.courses_loaded) refreshCourses(true);
+  }else{
+    badge.className='badge no'; badge.textContent='未登录';
+    document.getElementById('userInfo').textContent=
+      `多用户版：请用你自己的学习通扫码登录（互不干扰）`;
+    panel.classList.add('hidden'); loginPage.classList.remove('hidden');
+    stopLogPoll();
+  }
+}
+
+/* ---------- 监控 ---------- */
+let monRendered=false;
+function renderMonitor(st){
+  const sw=document.getElementById('monSwitch');
+  if(document.activeElement!==sw) sw.checked=st.monitoring;
+  document.getElementById('monState').textContent=st.monitoring?'监控运行中 ●':'监控已停止';
+  document.getElementById('monState').style.color=st.monitoring?'var(--green)':'var(--sub)';
+  document.getElementById('monSub').textContent=st.monitoring
+    ? `每 ${st.config.interval} 秒检测一次，发现普通签到自动完成`
+    : '开启后自动检测老师发布的签到';
+  document.getElementById('whoami').textContent=`uid ${st.uid} · 学校fid ${st.fid}`;
+  renderHealth(st);
+  const iv=document.getElementById('intervalInput'), key=document.getElementById('scKeyInput');
+  if(document.activeElement!==iv) iv.value=st.config.interval;
+  if(document.activeElement!==key) key.value=st.config.serverchan_key;
+}
+function fmtDur(s){const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return (d?d+'天':'')+(h?h+'小时':'')+(d?'':m+'分');}
+function renderHealth(st){
+  const box=document.getElementById('healthBox');
+  if(!box)return;
+  const now=Date.now()/1000;
+  let last='尚未检测';
+  if(st.last_check){
+    const gap=Math.round(now-st.last_check);
+    last = gap<120 ? `刚刚 (${gap}秒前)` : `${Math.round(gap/60)} 分钟前`;
+  }
+  const up=fmtDur(st.uptime||0);
+  const alive=st.monitoring&&st.monitor_alive;
+  const dot=alive?'🟢':(st.monitoring?'🔴':'⚪');
+  let html=`${dot} 监控线程: <b style="color:${alive?'var(--green)':(st.monitoring?'var(--red)':'var(--sub)')}">${alive?'运行中':(st.monitoring?'已停止(看门狗将自动重启)':'已停止')}</b><br>`
+    + `🕐 最后检测: ${last} · 已检测 ${st.monitor_rounds||0} 轮<br>`
+    + `⏱ 服务已运行: ${up} · 自愈 ${st.monitor_errors||0} 次<br>`
+    + `<span style="font-size:12px">24小时不间断：线程崩溃/服务重启会自动恢复，登录过期会推送提醒</span>`;
+  if(st.need_relogin){
+    html=`<b style="color:var(--red)">⚠️ 登录态已过期，监控已暂停</b><br>请重新扫码登录，登录后监控会自动恢复。`+html.slice(html.indexOf('24小时'));
+  }
+  box.innerHTML=html;
+}
+
+async function toggleMonitor(){
+  const on=document.getElementById('monSwitch').checked;
+  const {data}=await api('/api/monitor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on})});
+  if(!data.ok){toast(data.msg||'操作失败');document.getElementById('monSwitch').checked=!on;}
+  else toast(on?'监控已开启':'监控已停止');
+  pollState();
+}
+async function saveConfig(){
+  const body={interval:parseInt(document.getElementById('intervalInput').value)||45,
+              serverchan_key:document.getElementById('scKeyInput').value.trim(),
+              enabled_courses:checkedCourseKeys()};
+  const {data}=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(data.ok) toast('设置已保存'); else toast('保存失败');
+  pollState();
+}
+async function testNotify(){
+  toast('正在发送测试推送...');
+  const {data}=await api('/api/notify/test',{method:'POST'});
+  toast(data.ok?'✅ 测试推送已发送，请查看微信':'推送失败: '+(data.msg||''));
+}
+
+/* ---------- 课程 ---------- */
+let pollCoursesFlag=false;
+function checkedCourseKeys(){
+  return [...document.querySelectorAll('#courseList input:checked')].map(x=>x.value);
+}
+function renderCourses(st){
+  const enabled=new Set(st.config.enabled_courses||[]);
+  document.querySelectorAll('#courseList input').forEach(inp=>{inp.checked = enabled.size===0 || enabled.has(inp.value)});
+}
+async function refreshCourses(silent){
+  if(pollCoursesFlag) return;
+  pollCoursesFlag=true;
+  try{
+    const {status,data}=await api('/api/courses?refresh=1');
+    const box=document.getElementById('courseList');
+    if(!data.ok){box.innerHTML='<div class="empty">'+esc(data.msg||'未登录')+'</div>';return}
+    if(!data.courses.length){box.innerHTML='<div class="empty">未获取到课程</div>';return}
+    box.innerHTML=data.courses.map(c=>
+      `<label class="course-item"><input type="checkbox" value="${esc(c.key)}">
+       <span>${esc(c.courseName)}</span><span class="cls">${esc(c.className||'')}</span></label>`).join('');
+    if(!silent) toast('课程列表已刷新');
+    pollState();
+  }catch(e){ if(!silent) toast('刷新课程失败'); }
+  finally{ pollCoursesFlag=false; }
+}
+
+/* ---------- 多用户管理 ---------- */
+async function loadUsers(){
+  const {data}=await api('/api/users').catch(()=>({data:{}}));
+  const box=document.getElementById('userList');
+  if(!box)return;
+  if(!data.users||!data.users.length){box.innerHTML='<div class="empty">暂无其他用户，把网址发给同学即可各自扫码登录</div>';return}
+  const now=Date.now()/1000;
+  box.innerHTML=data.users.map(u=>{
+    const me=u.uid===data.current_uid;
+    const name=u.name||('用户'+u.uid_masked);
+    const st=!u.logged_in?['⚪ 未登录','var(--sub)']
+      :u.need_relogin?['⚠️ 需重登','var(--red)']
+      :u.monitor_alive?['🟢 监控中','var(--green)']
+      :u.monitoring?['🔴 线程异常','var(--red)']:['⚪ 未监控','var(--sub)'];
+    const gap=u.last_check?Math.round((now-u.last_check)/60):null;
+    return `<div class="course-item" style="align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div><b>${esc(name)}</b>${me?' <span class="tag s">我</span>':''}
+          <span style="font-size:12px;color:${st[1]}">${st[0]}</span></div>
+        <div style="font-size:11.5px;color:var(--sub);margin-top:2px">
+          ${u.courses} 门课 · ${u.records} 条记录${u.manual_today?' · ⏰'+u.manual_today+'待手动':''}
+          ${gap!==null?' · '+((gap<2?'刚刚':gap+'分前'))+'检测':''}</div>
+      </div>
+      <div style="display:flex;gap:5px;flex:none">
+        ${u.monitoring?`<button class="btn-g btn-sm" onclick="userCtrl('${u.uid}','stop_monitor')">停监控</button>`:''}
+        <button class="btn-danger btn-sm" onclick="userCtrl('${u.uid}','remove')">移除</button>
+      </div></div>`;
+  }).join('');
+}
+async function userCtrl(uid,action){
+  if(action==='remove'&&!confirm('确定移除该用户？其登录态、配置和签到记录都会被删除。'))return;
+  const {data}=await api('/api/users/control',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({uid,action})});
+  toast(data.msg||(data.ok?'已操作':'操作失败'));
+  loadUsers(); pollState();
+}
+
+/* ---------- 记录 / 横幅 ---------- */
+const TYPE_MANUAL={'二维码':1,'手势':1,'位置':1,'签到码':1,'拍照':1};
+function renderRecords(st){
+  const tb=document.getElementById('recBody');
+  const recs=st.records||[];
+  if(!recs.length){tb.innerHTML='<tr><td colspan="4" class="empty">暂无记录</td></tr>';return}
+  tb.innerHTML=recs.map(r=>{
+    let tag;
+    if(r.result==='success')tag='<span class="tag s">自动签成</span>';
+    else if(r.result==='manual')tag='<span class="tag m">需手动</span>';
+    else tag='<span class="tag f">失败</span>';
+    return `<tr><td>${esc(r.time)}</td><td><b>${esc(r.course)}</b><br><span style="color:var(--sub);font-size:12px">${esc(r.activity)} · ${esc(r.detail||'')}</span></td><td>${esc(r.type)}</td><td>${tag}</td></tr>`;
+  }).join('');
+}
+function renderBanner(st){
+  const b=document.getElementById('manualBanner');
+  if(st.need_relogin){
+    b.style.background='linear-gradient(90deg,#fdeaea,#ffd7d7)';
+    b.style.borderColor='#f0a0a0'; b.style.color='#a11';
+    b.innerHTML=`⚠️ <b>登录态已过期，监控已暂停！</b> 请重新扫码登录，登录后监控会自动恢复。`;
+    b.classList.add('show'); return;
+  }
+  b.style.background=''; b.style.borderColor=''; b.style.color='';
+  if(st.manual_today>0){
+    b.innerHTML=`⏰ 今天有 <b>${st.manual_today}</b> 个非普通签到（二维码/手势/位置/签到码/拍照）需要你打开学习通 App 手动完成！<button class="btn-g btn-sm" onclick="hideBanner()">知道了</button>`;
+    b.classList.add('show');
+  }else b.classList.remove('show');
+}
+function hideBanner(){document.getElementById('manualBanner').classList.remove('show')}
+async function clearRecords(){
+  await api('/api/records/clear',{method:'POST'}); toast('已清空'); pollState();
+}
+
+/* ---------- 日志 ---------- */
+function startLogPoll(){
+  const box=document.getElementById('logs');
+  const pull=async()=>{
+    const {data}=await api('/api/logs?after='+logSeq).catch(()=>({data:null}));
+    if(!data||!data.items||!data.items.length)return;
+    const near=box.scrollTop+box.clientHeight>=box.scrollHeight-40;
+    data.items.forEach(x=>{
+      const d=document.createElement('div');
+      d.innerHTML=`<span class="t">${esc(x.time)}</span><span class="l-${x.level}">${esc(x.msg)}</span>`;
+      box.appendChild(d);
+    });
+    while(box.childNodes.length>400)box.removeChild(box.firstChild);
+    if(near)box.scrollTop=box.scrollHeight;
+    logSeq=data.last;
+  };
+  pull();
+  logTimer=setInterval(pull,2000);
+}
+function stopLogPoll(){clearInterval(logTimer);logTimer=null}
+
+/* ---------- 登录: 二维码 ---------- */
+function switchTab(t){
+  document.getElementById('tabQr').className=t==='qr'?'on':'';
+  document.getElementById('tabSms').className=t==='sms'?'on':'';
+  document.getElementById('paneQr').classList.toggle('hidden',t!=='qr');
+  document.getElementById('paneSms').classList.toggle('hidden',t!=='sms');
+  document.getElementById('loginErr').textContent='';
+}
+async function qrStart(){
+  document.getElementById('loginErr').textContent='';
+  document.getElementById('qrBtn').disabled=true;
+  document.getElementById('qrStatus').textContent='正在获取二维码...';
+  document.getElementById('qrStatus').className='qr-status';
+  try{
+    const {status,data}=await api('/api/login/qr/start',{method:'POST'});
+    if(!data.ok||status!==200){
+      document.getElementById('qrBtn').disabled=false;
+      document.getElementById('qrStatus').textContent='';
+      document.getElementById('loginErr').textContent=data.msg||'获取失败';
+      return;
+    }
+    const img=document.getElementById('qrImg');
+    img.src='data:image/png;base64,'+data.qr; img.style.display='inline-block';
+    document.getElementById('qrPlaceholder').style.display='none';
+    startQrPoll(data.qr_id);
+  }catch(e){
+    document.getElementById('qrBtn').disabled=false;
+    document.getElementById('loginErr').textContent='网络错误: '+e;
+  }
+}
+function startQrPoll(qrId){
+  stopQrPoll();
+  qrTimer=setInterval(async()=>{
+    const {data}=await api('/api/login/qr/poll?qr_id='+encodeURIComponent(qrId||''))
+      .catch(()=>({data:{status:'waiting'}}));
+    const el=document.getElementById('qrStatus');
+    const set=(txt,hot)=>{el.textContent=txt;el.className='qr-status'+(hot?' hot':'')};
+    switch(data.status){
+      case 'waiting': set('等待扫码... 打开学习通 App 扫一扫'); break;
+      case 'scanned': set(`已扫描(${data.nickname||''})，请在手机上确认登录`, true); break;
+      case 'expired': set('二维码已过期，正在自动刷新...'); stopQrPoll(); qrStart(); break;
+      case 'canceled': set('你已在手机上取消了登录，可重新获取二维码'); stopQrPoll(); document.getElementById('qrBtn').disabled=false; break;
+      case 'failed': set(data.msg||'登录失败，请重试'); stopQrPoll(); document.getElementById('qrBtn').disabled=false; break;
+      case 'confirmed': set('✅ 登录成功！'); stopQrPoll(); pollState(); break;
+    }
+  },2000);
+}
+function stopQrPoll(){clearInterval(qrTimer);qrTimer=null}
+
+/* ---------- 登录: 浏览器验证码 ---------- */
+async function browserLogin(){
+  document.getElementById('loginErr').textContent='';
+  const {status,data}=await api('/api/login/browser',{method:'POST'});
+  if(!data.ok){document.getElementById('loginErr').textContent=data.msg||'启动失败';return}
+  document.getElementById('browserBtn').disabled=true;
+  stopBrPoll();
+  brTimer=setInterval(async()=>{
+    const {data:st}=await api('/api/login/browser/status').catch(()=>({data:{}}));
+    document.getElementById('browserStatus').textContent=st.status||'';
+    document.getElementById('browserStatus').className='qr-status'+(st.status&&st.status.includes('成功')?' hot':'');
+    if(!st.running){
+      stopBrPoll();
+      document.getElementById('browserBtn').disabled=false;
+      if(st.status&&st.status.includes('成功')) pollState();
+    }
+  },1500);
+}
+function stopBrPoll(){clearInterval(brTimer);brTimer=null}
+
+async function logout(){
+  if(!confirm('确定退出登录？'))return;
+  await api('/api/logout',{method:'POST'}); toast('已退出'); pollState();
+}
+
+pollState();
+setInterval(pollState,3000);
+</script>
+</body>
+</html>

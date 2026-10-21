@@ -1,0 +1,3553 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "学习通自动签到 · API",
+    "version": "2.5.0",
+    "description": "学习通自动签到服务的开放接口。\n\n鉴权方式：基于 Cookie 的会话（Flask session）。\n先用 POST /api/auth/login 或 /api/auth/register 登录，拿到会话 Cookie 后，后续请求带上该 Cookie 即可；需要管理员权限的接口由服务端按账号 role 校验。\n\n后端模型：网站账号(SiteUser) → 拥有多个学习通账号(ChaoxingAccount) → 各自独立监控。\n仅自动完成【普通签到】，其余类型提醒用户手动完成。\n\nv2.1.0 更新：新增站内消息中心（公告/签到/工单/系统四类消息，支持未读筛选、已读管理与清空）与后台邮件群发（内置 5 套模板、按全员或指定用户发送、后台线程逐发 + 任务进度轮询 + 发送历史）。\n\nv2.2.0 更新：三层防限频机制——①监控间隔自适应 max(60, 课程数x2) 秒（用户配置只能调长）并加 ±20% 抖动；②多账号启动错峰（随机 0~30s）；③连续 2 轮大面积受限（≥50% 课程）自动停机冷却 15 分钟，看门狗到点自愈，手动停止不误恢复。账号 summary 新增 interval / freq_cooldown 字段。\n\nv2.3.0 更新：协助签到（同学帮签）。二维码/手势/签到码三类签到改为进入「待协助」队列并推送协助链接；同学打开 /assist/<token> 提交 enc 或手势轨迹即可代你完成签到。新增 /assist、/api/assist/*、/api/accounts/{id}/assist-token、/my-assist。\n\nv2.3.1 更新：协助页交互优化——二维码签到改为页面内置摄像头扫码（jsQR 实时识别、自动提取 enc 提交，保留手动粘贴兜底）；手势签到改为九宫格直选（同学抬头看老师屏幕照着划出，无需摄像头），移除拍照识别。\n\nv2.3.2 更新：扫码体验加固——老师屏幕的二维码刷新很快，扫码后页面立即校验有效性并给出明确提示：✅ 有效则直接提交；❌ 已失效则提示重扫最新的码并自动重新打开摄像头（同一码 3 秒内不重复提交，不会对着旧码死循环）；❌ 不是签到码则提示对准老师屏幕后继续扫。非失效类失败（如网络异常）仍会关闭摄像头，避免空耗电。\n\nv2.4.0 更新：新增 APP 闪屏配置——后台管理页「APP闪屏」可设置闪屏图片链接、展示秒数（1~10）、点击跳转链接与启用开关；APP 启动时调 GET /api/app/splash 拉取，展示到时间自动进入首页，点击闪屏可跳转配置的链接。新增公开接口 /api/app/splash 与管理接口 GET / PUT /api/admin/splash。\n\nv2.5.0：协助签到扫码体验修复——内置浏览器（微信/QQ等）打开协助链接时弹出「请使用浏览器打开」引导浮层（含「用浏览器打开」intent 跳转与「复制链接」降级）；扫码采集升级 1080p + 连续对焦 + 三档视野（全画幅/中心60%/中心35%）逐帧轮换识别，放大按钮为数字变焦（全设备可用），手电筒按硬件能力显隐。API 无变化。"
+  },
+  "servers": [
+    {
+      "url": "http://xxt.leich.cn",
+      "description": "生产环境"
+    },
+    {
+      "url": "http://127.0.0.1:9001",
+      "description": "本地/服务器直连"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "session",
+        "description": "登录后由服务端下发的会话 Cookie"
+      }
+    },
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "example": false
+          },
+          "msg": {
+            "type": "string"
+          }
+        }
+      },
+      "SiteUser": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "user"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Account": {
+        "type": "object",
+        "properties": {
+          "acct_id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "logged_in": {
+            "type": "boolean"
+          },
+          "monitoring": {
+            "type": "boolean"
+          },
+          "monitor_alive": {
+            "type": "boolean"
+          },
+          "courses": {
+            "type": "integer"
+          },
+          "records": {
+            "type": "integer"
+          },
+          "manual_today": {
+            "type": "integer"
+          },
+          "need_relogin": {
+            "type": "boolean"
+          },
+          "last_check": {
+            "type": "number"
+          },
+          "interval": {
+            "type": "integer",
+            "description": "当前生效的监控间隔（秒）。服务端自适应：max(60, 课程数x2)，用户配置只能调长不能短于该防限频下限"
+          },
+          "freq_cooldown": {
+            "type": "integer",
+            "description": "限频自动冷却剩余秒数。>0 表示账号被学习通大面积限频、服务端已停机静默，到点由看门狗自动恢复监控；手动停止的账号恒为 0"
+          }
+        }
+      },
+      "Ticket": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "uid": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "bug",
+              "feature",
+              "question",
+              "other"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "in_progress",
+              "resolved",
+              "closed"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "reply_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "Announcement": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "info",
+              "success",
+              "warning",
+              "error"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "AppRelease": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "version_name": {
+            "type": "string",
+            "description": "版本号，如 1.0.0"
+          },
+          "version_code": {
+            "type": "integer",
+            "description": "版本序号（递增唯一）"
+          },
+          "apk_url": {
+            "type": "string",
+            "description": "APK 下载直链"
+          },
+          "update_log": {
+            "type": "string",
+            "description": "更新日志"
+          },
+          "force_update": {
+            "type": "boolean",
+            "description": "是否强制更新"
+          },
+          "min_supported_code": {
+            "type": "integer",
+            "description": "最低支持 version_code，0 不限"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        }
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "announcement",
+              "sign",
+              "ticket",
+              "system"
+            ],
+            "description": "消息类型：公告/签到/工单/系统"
+          },
+          "title": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "ref_id": {
+            "type": "string",
+            "description": "关联业务 ID（公告 ID / 工单 ID 等）"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        }
+      },
+      "EmailTemplate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "maintenance",
+              "feature",
+              "abnormal",
+              "inactive",
+              "custom"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string",
+            "description": "纯文本正文，\\n 分段"
+          }
+        }
+      },
+      "EmailLog": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "to_mode": {
+            "type": "string",
+            "enum": [
+              "all",
+              "users"
+            ]
+          },
+          "to_count": {
+            "type": "integer"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "ok_count": {
+            "type": "integer"
+          },
+          "fail_count": {
+            "type": "integer"
+          },
+          "detail": {
+            "type": "string",
+            "description": "失败明细（最多 5 条）"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        }
+      },
+      "EmailTask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done"
+            ]
+          },
+          "total": {
+            "type": "integer"
+          },
+          "done": {
+            "type": "integer",
+            "description": "已处理人数"
+          },
+          "ok": {
+            "type": "integer"
+          },
+          "fail": {
+            "type": "integer"
+          },
+          "detail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "subject": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "cookieAuth": []
+    }
+  ],
+  "paths": {
+    "/api/accounts": {
+      "get": {
+        "summary": "列出我的学习通账号",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{acct_id}": {
+      "get": {
+        "summary": "账号详情(配置+课程)",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "summary": "移除账号",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/accounts/{acct_id}/check": {
+      "post": {
+        "summary": "手动检测：验证学习通登录态 + 立即扫描一轮全部课程是否有签到（不等待监控轮询）",
+        "description": "同步执行并返回结构化结果。登录态失效时返回 400 且 msg 提示重新扫码登录；成功时返回 login_ok/checked/found，found 为本次新检测到并处理的签到活动列表（course/activity/type/result/detail；result: success=自动签到成功, fail=失败, manual=需手动完成）。",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "检查完成",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "login_ok": {
+                      "type": "boolean",
+                      "description": "学习通登录态是否有效"
+                    },
+                    "checked": {
+                      "type": "integer",
+                      "description": "实际扫描的课程数"
+                    },
+                    "found": {
+                      "type": "array",
+                      "description": "本次新检测到并处理的签到活动",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "course": {
+                            "type": "string"
+                          },
+                          "activity": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "result": {
+                            "type": "string",
+                            "enum": [
+                              "success",
+                              "fail",
+                              "manual"
+                            ]
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "msg": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数/业务错误（如登录态已失效、已有检查进行中）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/accounts/{acct_id}/config": {
+      "post": {
+        "summary": "更新账号配置",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "interval": {
+                    "type": "integer"
+                  },
+                  "serverchan_key": {
+                    "type": "string"
+                  },
+                  "enabled_courses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "monitor_on": {
+                    "type": "boolean"
+                  },
+                  "loc_enabled": {
+                    "type": "boolean",
+                    "description": "位置模拟开关"
+                  },
+                  "loc_lat": {
+                    "type": "string",
+                    "description": "模拟纬度 -90~90"
+                  },
+                  "loc_lng": {
+                    "type": "string",
+                    "description": "模拟经度 -180~180"
+                  },
+                  "loc_addr": {
+                    "type": "string",
+                    "description": "地址备注(可选)"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{acct_id}/courses": {
+      "get": {
+        "summary": "课程列表",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/accounts/{acct_id}/courses/refresh": {
+      "post": {
+        "summary": "刷新课程列表",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/accounts/{acct_id}/location": {
+      "get": {
+        "summary": "读取位置模拟配置",
+        "tags": [
+          "我的账号"
+        ],
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "location": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean",
+                          "description": "是否启用位置模拟"
+                        },
+                        "lat": {
+                          "type": "string",
+                          "description": "纬度"
+                        },
+                        "lng": {
+                          "type": "string",
+                          "description": "经度"
+                        },
+                        "address": {
+                          "type": "string",
+                          "description": "地址备注"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "设置位置模拟坐标（位置签到自动提交）",
+        "tags": [
+          "我的账号"
+        ],
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "是否启用位置模拟"
+                  },
+                  "lat": {
+                    "type": "string",
+                    "description": "纬度 -90~90"
+                  },
+                  "lng": {
+                    "type": "string",
+                    "description": "经度 -180~180"
+                  },
+                  "address": {
+                    "type": "string",
+                    "description": "地址备注(可选)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "坐标不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "设置位置模拟坐标（PUT 别名）",
+        "tags": [
+          "我的账号"
+        ],
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "lat": {
+                    "type": "string"
+                  },
+                  "lng": {
+                    "type": "string"
+                  },
+                  "address": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "坐标不合法"
+          }
+        }
+      }
+    },
+    "/api/accounts/{acct_id}/logout": {
+      "post": {
+        "summary": "退出该学习通账号",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/accounts/{acct_id}/monitor": {
+      "post": {
+        "summary": "开启/停止监控",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{acct_id}/notify/test": {
+      "post": {
+        "summary": "测试 Server 酱推送",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/accounts/{acct_id}/records": {
+      "get": {
+        "summary": "签到记录",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/accounts/{acct_id}/status": {
+      "get": {
+        "summary": "账号监控状态(轮询用)",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/accounts": {
+      "get": {
+        "summary": "全部学习通账号",
+        "tags": [
+          "后台-账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/accounts/{acct_id}": {
+      "delete": {
+        "summary": "后台删除账号",
+        "tags": [
+          "后台-账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/accounts/{acct_id}/check": {
+      "post": {
+        "summary": "管理员手动触发一次立即检测（验证登录态 + 扫描一轮，不等监控轮询）",
+        "description": "返回结构与用户端 POST /api/accounts/{acct_id}/check 一致：login_ok/checked/found/msg。",
+        "tags": [
+          "后台-账号"
+        ],
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/accounts/{acct_id}/logout": {
+      "post": {
+        "summary": "强制下线某账号（监控暂停，需用户重新扫码）",
+        "tags": [
+          "后台-账号"
+        ],
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/accounts/{acct_id}/monitor": {
+      "post": {
+        "summary": "后台控制监控",
+        "tags": [
+          "后台-账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "on": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/announcements": {
+      "get": {
+        "summary": "公告列表(含未启用)",
+        "tags": [
+          "后台-公告"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "新建公告",
+        "tags": [
+          "后台-公告"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "content"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "success",
+                      "warning",
+                      "error"
+                    ]
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/announcements/{aid}": {
+      "put": {
+        "summary": "编辑公告",
+        "tags": [
+          "后台-公告"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "aid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "info",
+                      "success",
+                      "warning",
+                      "error"
+                    ]
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "删除公告",
+        "tags": [
+          "后台-公告"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "aid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/app-releases": {
+      "get": {
+        "summary": "APP 版本列表（按 version_code 倒序）",
+        "tags": [
+          "后台-APP版本"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "403": {
+            "description": "需要管理员权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "发布新 APP 版本",
+        "tags": [
+          "后台-APP版本"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "version_name",
+                  "version_code"
+                ],
+                "properties": {
+                  "version_name": {
+                    "type": "string",
+                    "description": "版本号 x.y(.z)，如 1.0.0"
+                  },
+                  "version_code": {
+                    "type": "integer",
+                    "description": "版本序号，必须唯一且递增"
+                  },
+                  "apk_url": {
+                    "type": "string",
+                    "description": "APK 下载直链(可选)"
+                  },
+                  "update_log": {
+                    "type": "string",
+                    "description": "更新日志(可选)"
+                  },
+                  "force_update": {
+                    "type": "boolean",
+                    "description": "强制更新(可选)"
+                  },
+                  "min_supported_code": {
+                    "type": "integer",
+                    "description": "最低支持版本序号(可选)"
+                  },
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "是否启用(可选)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "需要管理员权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/app-releases/{rid}": {
+      "put": {
+        "summary": "编辑 APP 版本",
+        "tags": [
+          "后台-APP版本"
+        ],
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version_name": {
+                    "type": "string"
+                  },
+                  "apk_url": {
+                    "type": "string"
+                  },
+                  "update_log": {
+                    "type": "string"
+                  },
+                  "force_update": {
+                    "type": "boolean"
+                  },
+                  "min_supported_code": {
+                    "type": "integer"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "需要管理员权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "删除 APP 版本",
+        "tags": [
+          "后台-APP版本"
+        ],
+        "parameters": [
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "403": {
+            "description": "需要管理员权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/email/logs": {
+      "get": {
+        "summary": "邮件群发：获取发送历史（最近 50 条）",
+        "tags": [
+          "邮件群发"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "logs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmailLog"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "需要管理员权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/email/send": {
+      "post": {
+        "summary": "邮件群发：创建发送任务（后台线程逐发，立即返回任务 ID）",
+        "description": "收件人自动去重，跳过已禁用与未绑定邮箱的用户。任务在后台线程执行，通过 GET /api/admin/email/task/{tid} 轮询进度。",
+        "tags": [
+          "邮件群发"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "subject",
+                  "content"
+                ],
+                "properties": {
+                  "subject": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "纯文本正文，\\n 分段"
+                  },
+                  "to_mode": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "users"
+                    ],
+                    "default": "all",
+                    "description": "all=全体用户；users=按 usernames 指定"
+                  },
+                  "usernames": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "to_mode=users 时的收件人用户名列表"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务已创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "task_id": {
+                      "type": "integer"
+                    },
+                    "total": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "需要管理员权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/email/task/{tid}": {
+      "get": {
+        "summary": "邮件群发：轮询发送任务进度",
+        "tags": [
+          "邮件群发"
+        ],
+        "parameters": [
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "任务 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "task": {
+                      "$ref": "#/components/schemas/EmailTask"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "需要管理员权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/email/templates": {
+      "get": {
+        "summary": "邮件群发：获取内置模板列表（5 套）",
+        "tags": [
+          "邮件群发"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "templates": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/EmailTemplate"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "需要管理员权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/logs": {
+      "get": {
+        "summary": "系统日志(轮询 after)",
+        "tags": [
+          "后台-账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/records": {
+      "get": {
+        "summary": "全局签到记录（可按用户/结果筛选，含签到统计）",
+        "tags": [
+          "后台-记录"
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "按站点用户名筛选"
+          },
+          {
+            "name": "result",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "fail",
+                "manual"
+              ]
+            },
+            "description": "按结果筛选"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "maximum": 500
+            },
+            "description": "返回条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/settings": {
+      "get": {
+        "summary": "查看系统设置",
+        "tags": [
+          "后台-设置"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "更新系统设置（注册开关/邮件通知开关/站点名称）",
+        "tags": [
+          "后台-设置"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "site_name": {
+                    "type": "string",
+                    "description": "站点名称(可选)"
+                  },
+                  "registration_open": {
+                    "type": "boolean",
+                    "description": "是否开放注册(可选)"
+                  },
+                  "email_notify": {
+                    "type": "boolean",
+                    "description": "邮件通知总开关(可选)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/stats": {
+      "get": {
+        "summary": "后台概览统计",
+        "tags": [
+          "后台-用户"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tickets": {
+      "get": {
+        "summary": "全部工单",
+        "tags": [
+          "后台-工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/tickets/{tid}": {
+      "get": {
+        "summary": "工单详情(后台)",
+        "tags": [
+          "后台-工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除工单",
+        "tags": [
+          "后台-工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/admin/tickets/{tid}/reply": {
+      "post": {
+        "summary": "管理员回复",
+        "tags": [
+          "后台-工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "message"
+                ],
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  },
+                  "close_after": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/tickets/{tid}/status": {
+      "post": {
+        "summary": "更新工单状态/优先级",
+        "tags": [
+          "后台-工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  },
+                  "priority": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users": {
+      "get": {
+        "summary": "用户列表",
+        "tags": [
+          "后台-用户"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "创建用户",
+        "tags": [
+          "后台-用户"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "admin"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users/{username}": {
+      "delete": {
+        "summary": "删除用户",
+        "tags": [
+          "后台-用户"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "summary": "编辑用户（QQ邮箱/重置密码/角色）",
+        "tags": [
+          "后台-用户"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "description": "新邮箱(可选)"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "新密码,至少6位(可选,留空不改)"
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "admin"
+                    ],
+                    "description": "角色(可选)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/users/{username}/disable": {
+      "post": {
+        "summary": "禁用/启用用户",
+        "tags": [
+          "后台-用户"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "disabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/announcements": {
+      "get": {
+        "summary": "获取顶部展示的公告列表",
+        "tags": [
+          "公告"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "announcements": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Announcement"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/app/version": {
+      "get": {
+        "summary": "APP 检测更新（公开，APP 启动时调用）",
+        "description": "返回启用中 version_code 最大的版本作为最新版；带上当前版本参数时返回 has_update / force_update / below_min_supported。",
+        "tags": [
+          "APP版本"
+        ],
+        "parameters": [
+          {
+            "name": "version_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "当前 APP 的版本序号"
+          },
+          {
+            "name": "version_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "当前 APP 的版本号（无 version_code 时按此比较）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "summary": "登录",
+        "tags": [
+          "鉴权"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "summary": "退出登录",
+        "tags": [
+          "鉴权"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "summary": "获取当前登录用户信息",
+        "tags": [
+          "鉴权"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/profile": {
+      "put": {
+        "summary": "更新个人资料（QQ邮箱/密码）",
+        "tags": [
+          "鉴权"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "description": "新的QQ邮箱"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "新密码，留空则不修改"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "summary": "注册并登录（需绑定QQ邮箱）",
+        "tags": [
+          "鉴权"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password",
+                  "email"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string",
+                    "description": "QQ邮箱，用于接收签到通知"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages": {
+      "get": {
+        "summary": "消息中心：获取当前用户的消息列表",
+        "tags": [
+          "消息中心"
+        ],
+        "parameters": [
+          {
+            "name": "unread",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "true 仅返回未读"
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "announcement",
+                "sign",
+                "ticket",
+                "system"
+              ]
+            },
+            "description": "按类型筛选"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100
+            },
+            "description": "返回条数上限"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Message"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/read-all": {
+      "post": {
+        "summary": "消息中心：全部标记为已读",
+        "tags": [
+          "消息中心"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/read/clear": {
+      "post": {
+        "summary": "消息中心：清空已读消息",
+        "tags": [
+          "消息中心"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "removed": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/unread-count": {
+      "get": {
+        "summary": "消息中心：获取未读消息数（侧边栏红点轮询）",
+        "tags": [
+          "消息中心"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "unread": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/{mid}/read": {
+      "post": {
+        "summary": "消息中心：单条标记为已读（越权访问返回 404）",
+        "tags": [
+          "消息中心"
+        ],
+        "parameters": [
+          {
+            "name": "mid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "消息 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "未登录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ping": {
+      "get": {
+        "summary": "健康检查",
+        "tags": [
+          "通用"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/qr/poll": {
+      "get": {
+        "summary": "轮询扫码结果",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "qr_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/qr/start": {
+      "post": {
+        "summary": "生成扫码登录二维码",
+        "tags": [
+          "我的账号"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets": {
+      "post": {
+        "summary": "提交工单",
+        "tags": [
+          "工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "subject",
+                  "content"
+                ],
+                "properties": {
+                  "subject": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "bug",
+                      "feature",
+                      "question",
+                      "other"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "我的工单列表",
+        "tags": [
+          "工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tickets/{tid}": {
+      "get": {
+        "summary": "工单详情",
+        "tags": [
+          "工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tickets/{tid}/reply": {
+      "post": {
+        "summary": "回复工单",
+        "tags": [
+          "工单"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "tid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "message"
+                ],
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/assist/{token}": {
+      "get": {
+        "tags": [
+          "协助签到(公开)"
+        ],
+        "summary": "同学帮签 H5 页面",
+        "description": "免登录。同学打开后可见该账号当前待协助的二维码/手势/签到码签到：二维码卡片内置「📷 扫码签到」按钮调用手机摄像头（jsQR 实时识别自动提取 enc，保留手动粘贴兜底）；手势卡片直接渲染九宫格，同学照着老师屏幕的手势按顺序点出；签到码卡片直接输入。",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML 页面；链接无效时返回提示页"
+          }
+        }
+      }
+    },
+    "/api/assist/{token}/pending": {
+      "get": {
+        "tags": [
+          "协助签到(公开)"
+        ],
+        "summary": "列出待协助签到",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "items: [{active_id,tname,type,course,activity,expires_in,kind}]"
+          }
+        }
+      }
+    },
+    "/api/assist/{token}/qr": {
+      "post": {
+        "tags": [
+          "协助签到(公开)"
+        ],
+        "summary": "提交二维码 enc 完成签到（页面摄像头扫码自动提取，或手动粘贴链接/enc）",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "active_id": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string",
+                    "description": "二维码 URL 或其中的 enc 参数"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{ok:true,detail}"
+          },
+          "400": {
+            "description": "提交失败 {ok:false,msg}"
+          }
+        }
+      }
+    },
+    "/api/assist/{token}/gesture": {
+      "post": {
+        "tags": [
+          "协助签到(公开)"
+        ],
+        "summary": "提交手势轨迹/签到码完成签到",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "active_id": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string",
+                    "description": "九宫格数字串(如 1235789) 或 4 位签到码"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{ok:true,detail}"
+          },
+          "400": {
+            "description": "提交失败 {ok:false,msg}"
+          }
+        }
+      }
+    },
+    "/api/accounts/{acct_id}/assist-token": {
+      "get": {
+        "tags": [
+          "协助签到(账号)"
+        ],
+        "summary": "获取该账号协助链接",
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{token, link}"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "协助签到(账号)"
+        ],
+        "summary": "生成/重置协助链接（旧链接立即失效）",
+        "parameters": [
+          {
+            "name": "acct_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reset": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{token, link}"
+          }
+        }
+      }
+    },
+    "/my-assist": {
+      "get": {
+        "tags": [
+          "协助签到(账号)"
+        ],
+        "summary": "主人自助页：查看/复制各账号协助链接（需登录）",
+        "responses": {
+          "200": {
+            "description": "HTML 页面"
+          }
+        }
+      }
+    },
+    "/api/app/splash": {
+      "get": {
+        "summary": "APP 闪屏配置（公开）",
+        "description": "APP 启动时调用。后台未启用或未配置图片链接时 enabled=false；duration 为展示秒数（1~10），到时自动进首页；jump_url 为点击闪屏的跳转链接，为空表示点击不跳转。",
+        "tags": [
+          "APP"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "是否展示闪屏"
+                    },
+                    "image_url": {
+                      "type": "string",
+                      "description": "闪屏图片链接"
+                    },
+                    "duration": {
+                      "type": "integer",
+                      "description": "展示秒数（1~10）"
+                    },
+                    "jump_url": {
+                      "type": "string",
+                      "description": "点击跳转链接，空=不跳转"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/splash": {
+      "get": {
+        "summary": "查看闪屏配置",
+        "tags": [
+          "后台-设置"
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "splash": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean",
+                          "description": "启用闪屏"
+                        },
+                        "image_url": {
+                          "type": "string",
+                          "description": "闪屏图片链接（建议 1080x1920 竖图）"
+                        },
+                        "duration": {
+                          "type": "integer",
+                          "description": "展示秒数，1~10，越界自动钳制"
+                        },
+                        "jump_url": {
+                          "type": "string",
+                          "description": "点击跳转链接，空=不跳转"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "description": "最近修改时间"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "更新闪屏配置（图片链接/秒数/跳转链接/开关）",
+        "tags": [
+          "后台-设置"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "启用闪屏"
+                  },
+                  "image_url": {
+                    "type": "string",
+                    "description": "闪屏图片链接（建议 1080x1920 竖图）"
+                  },
+                  "duration": {
+                    "type": "integer",
+                    "description": "展示秒数，1~10，越界自动钳制"
+                  },
+                  "jump_url": {
+                    "type": "string",
+                    "description": "点击跳转链接，空=不跳转"
+                  },
+                  "updated_at": {
+                    "type": "string",
+                    "description": "最近修改时间"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "splash": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean",
+                          "description": "启用闪屏"
+                        },
+                        "image_url": {
+                          "type": "string",
+                          "description": "闪屏图片链接（建议 1080x1920 竖图）"
+                        },
+                        "duration": {
+                          "type": "integer",
+                          "description": "展示秒数，1~10，越界自动钳制"
+                        },
+                        "jump_url": {
+                          "type": "string",
+                          "description": "点击跳转链接，空=不跳转"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "description": "最近修改时间"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数/业务错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

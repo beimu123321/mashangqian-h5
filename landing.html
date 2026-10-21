@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="马上签 - 超星学习通自动签到工具，支持网页版与 APP 版，自动监控签到活动、QQ 邮件通知、多账号管理。">
+<link rel="icon" type="image/png" href="/static/favicon.png">
+<link rel="stylesheet" href="/static/remixicon/remixicon.css">
+<title>马上签 - 超星学习通自动签到</title>
+<style>
+  :root {
+    --blue: #1677ff;
+    --blue-dark: #0958d9;
+    --blue-bg: #e6f4ff;
+    --blue-border: #bae0ff;
+    --text: #1f2c3f;
+    --text-2: #5b6b82;
+    --text-3: #8a94a6;
+    --line: #eef2f8;
+    --card-border: #e8eef7;
+    --sec-bg: #f5f9ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: #fff;
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { text-decoration: none; color: inherit; }
+  [class^="ri-"], [class*=" ri-"] { font-style: normal; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- 顶部导航 ---------- */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    height: 64px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 19px; font-weight: 700; color: var(--blue); }
+  .brand img { width: 32px; height: 32px; object-fit: contain; }
+  .nav-links { display: flex; align-items: center; gap: 24px; font-size: 14px; }
+  .nav-links > a { color: var(--text-2); font-weight: 500; }
+  .nav-links > a:hover { color: var(--blue); }
+  .nav-links a.btn-primary, .nav-links a.btn-primary:hover { color: #fff; }
+
+  /* ---------- 按钮（胶囊） ---------- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: none; cursor: pointer; font-family: inherit;
+    border-radius: 999px; font-weight: 600; transition: all 0.15s ease;
+    text-decoration: none; white-space: nowrap;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--blue); color: #fff; }
+  .btn-primary:hover { background: var(--blue-dark); }
+  .btn-outline { background: #fff; color: var(--blue); border: 1.5px solid var(--blue); }
+  .btn-outline:hover { background: var(--blue-bg); }
+  .btn-sm { padding: 8px 20px; font-size: 13.5px; }
+  .btn-lg { padding: 14px 40px; font-size: 16px; }
+  .btn-block { display: flex; width: 100%; padding: 13px 0; font-size: 15px; }
+  .btn-soon { background: #c9d6e8 !important; color: #fff !important; cursor: not-allowed; }
+
+  /* ---------- Hero ---------- */
+  .hero { text-align: center; padding: 88px 24px 72px; }
+  .hero h1 { font-size: 52px; font-weight: 800; letter-spacing: 1px; margin-bottom: 20px; }
+  .hero .sub {
+    max-width: 620px; margin: 0 auto 36px; color: var(--text-2); font-size: 16px;
+  }
+  .cta-main { margin-bottom: 18px; }
+  .cta-link { display: inline-flex; align-items: center; gap: 4px; font-size: 14.5px; font-weight: 600; color: var(--blue); }
+  .cta-link:hover { color: var(--blue-dark); }
+
+  /* ---------- 版块标签（仿 eyebrow） ---------- */
+  .sec { padding: 40px 0 72px; }
+  .eyebrow {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 700; color: var(--blue);
+    letter-spacing: 2px; margin-bottom: 12px;
+  }
+  .eyebrow .en { color: var(--blue-border); font-weight: 700; }
+  .sec h2 { font-size: 32px; font-weight: 800; margin-bottom: 10px; }
+  .sec .desc { color: var(--text-2); font-size: 15px; max-width: 560px; }
+
+  /* ---------- 功能卡片（浅蓝圆角容器） ---------- */
+  .feature-box {
+    margin-top: 32px;
+    background: var(--sec-bg); border-radius: 24px; padding: 40px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+  }
+  .f-card {
+    background: #fff; border: 1px solid var(--card-border); border-radius: 16px;
+    padding: 24px;
+  }
+  .f-icon {
+    width: 44px; height: 44px; border-radius: 12px; background: var(--blue-bg);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 14px;
+  }
+  .f-icon i { font-size: 22px; color: var(--blue); }
+  .f-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .f-card p { font-size: 13.5px; color: var(--text-2); }
+
+  /* ---------- 下载 / 版本卡片 ---------- */
+  .versions {
+    margin-top: 32px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+  }
+  .v-card {
+    background: #fff; border: 1px solid var(--card-border); border-radius: 16px;
+    padding: 28px 28px 24px; display: flex; flex-direction: column;
+  }
+  .v-card:hover { border-color: var(--blue-border); }
+  .v-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .v-icon {
+    width: 46px; height: 46px; border-radius: 12px; background: var(--blue-bg);
+    display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .v-icon i { font-size: 23px; color: var(--blue); }
+  .v-head h3 { font-size: 19px; }
+  .v-badge {
+    display: inline-block; font-size: 12px; color: var(--blue-dark); background: var(--blue-bg);
+    border-radius: 4px; padding: 1px 8px; margin-top: 2px; font-weight: 600;
+  }
+  .v-badge-new { color: #fff; background: var(--blue); }
+  .v-desc { color: var(--text-2); font-size: 13.5px; margin-bottom: 12px; }
+  .v-list { list-style: none; margin-bottom: 20px; flex: 1; }
+  .v-list li {
+    font-size: 14px; padding: 7px 0 7px 26px; position: relative;
+    border-bottom: 1px solid var(--line);
+  }
+  .v-list li:last-child { border-bottom: none; }
+  .v-list li i {
+    position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+    font-size: 14px; color: var(--blue);
+  }
+  .v-note { text-align: center; font-size: 12.5px; color: var(--text-3); margin-top: 10px; }
+  .app-log { text-align: center; font-size: 12.5px; color: var(--blue-dark); margin-top: 2px; min-height: 18px; }
+
+  /* ---------- 页脚 ---------- */
+  footer { border-top: 1px solid var(--line); padding: 28px 20px; }
+  .foot-inner { max-width: 1120px; margin: 0 auto; text-align: center; }
+  .foot-links { display: flex; gap: 22px; justify-content: center; font-size: 13.5px; color: var(--text-2); margin-bottom: 6px; }
+  .foot-links a:hover { color: var(--blue); }
+  .foot-inner p { font-size: 12.5px; color: var(--text-3); }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 860px) {
+    .hero { padding: 56px 20px 48px; }
+    .hero h1 { font-size: 36px; }
+    .hero .sub { font-size: 15px; }
+    .feature-box { grid-template-columns: 1fr; padding: 24px; }
+    .versions { grid-template-columns: 1fr; }
+    .sec h2 { font-size: 26px; }
+    .btn-lg { padding: 12px 30px; font-size: 15px; }
+    .nav-links > a:not(.btn) { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="/">
+      <img src="/static/logo.png" alt="马上签">
+      <span>马上签</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/help" target="_blank">使用教程</a>
+      <a class="btn btn-primary btn-sm" href="/app">网页版登录</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <h1>马上签，帮你签</h1>
+    <p class="sub">超星学习通自动签到工具。自动监控课程签到活动，到点自动完成签到，<br>结果即时 QQ 邮件提醒，多账号统一管理。</p>
+    <div class="cta-main">
+      <a class="btn btn-primary btn-lg" href="/app">立即使用网页版</a>
+    </div>
+    <a class="cta-link" href="#download">下载 APP 版 <i class="ri-arrow-down-line"></i></a>
+  </section>
+
+  <section class="sec">
+    <div class="wrap">
+      <div class="eyebrow">核心功能 <span class="en">FEATURES</span></div>
+      <h2>把签到交给马上签</h2>
+      <p class="desc">到点自动完成，结果实时通知，无需时刻盯着手机。</p>
+      <div class="feature-box">
+        <div class="f-card">
+          <div class="f-icon"><i class="ri-radar-line"></i></div>
+          <h3>自动监控签到</h3>
+          <p>全天候监控课程签到活动，普通、签到码、拍照等多种类型到点自动完成。</p>
+        </div>
+        <div class="f-card">
+          <div class="f-icon"><i class="ri-mail-line"></i></div>
+          <h3>QQ 邮件通知</h3>
+          <p>签到结果即时推送，成功与失败一目了然，随时掌握账号动态。</p>
+        </div>
+        <div class="f-card">
+          <div class="f-icon"><i class="ri-user-settings-line"></i></div>
+          <h3>多账号管理</h3>
+          <p>扫码或账密添加学习通账号，统一管理监控开关，切换自如。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="download">
+    <div class="wrap">
+      <div class="eyebrow">立即下载 <span class="en">GET STARTED</span></div>
+      <h2>网页版 &amp; APP 版</h2>
+      <p class="desc">两种方式任选，手机电脑都能用。</p>
+      <div class="versions">
+        <div class="v-card">
+          <div class="v-head">
+            <div class="v-icon">
+              <i class="ri-computer-line"></i>
+            </div>
+            <div>
+              <h3>网页版</h3>
+              <span class="v-badge">无需安装 · 即开即用</span>
+            </div>
+          </div>
+          <p class="v-desc">浏览器打开即用，手机电脑都能访问。</p>
+          <ul class="v-list">
+            <li><i class="ri-check-line"></i>扫码 / 账密添加学习通账号</li>
+            <li><i class="ri-check-line"></i>自动监控签到，无需守着手机</li>
+            <li><i class="ri-check-line"></i>签到结果 QQ 邮件通知</li>
+          </ul>
+          <a class="btn btn-primary btn-block" href="/app">进入网页版</a>
+          <p class="v-note">推荐 Chrome / Edge 浏览器访问</p>
+        </div>
+
+        <div class="v-card">
+          <div class="v-head">
+            <div class="v-icon">
+              <i class="ri-smartphone-line"></i>
+            </div>
+            <div>
+              <h3>APP 版</h3>
+              <span class="v-badge v-badge-new">NEW</span>
+            </div>
+          </div>
+          <p class="v-desc">安卓安装包，签到消息实时推送。</p>
+          <ul class="v-list">
+            <li><i class="ri-check-line"></i>签到消息推送，不错过每次签到</li>
+            <li><i class="ri-check-line"></i>账号与监控开关随身管理</li>
+            <li><i class="ri-check-line"></i>内置更新检测，一键升级</li>
+          </ul>
+          <button class="btn btn-primary btn-block" id="dlBtn2" type="button">下载 APP</button>
+          <p class="v-note">当前版本：<span id="appVer">检测中…</span></p>
+          <p class="app-log" id="appLog"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="foot-inner">
+    <div class="foot-links">
+      <a href="/app">网页版</a>
+      <a href="/help" target="_blank">使用教程</a>
+    </div>
+    <p>© 2026 马上签 · 仅供学习交流使用</p>
+  </div>
+</footer>
+
+<button id="dlBtn" type="button" hidden></button>
+
+<script>
+(function () {
+  var btns = [document.getElementById('dlBtn'), document.getElementById('dlBtn2')];
+  var verEl = document.getElementById('appVer');
+  var logEl = document.getElementById('appLog');
+
+  function setSoon(text) {
+    verEl.textContent = 'APP 开发中，敬请期待';
+    logEl.textContent = '';
+    btns.forEach(function (b) {
+      b.textContent = text || '即将发布';
+      b.disabled = true;
+      b.classList.add('btn-soon');
+    });
+  }
+
+  fetch('/api/app/version')
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      var latest = j && j.ok && j.latest;
+      if (!latest) { setSoon(); return; }
+      verEl.textContent = 'v' + latest.version_name;
+      if (latest.update_log) {
+        logEl.textContent = '更新：' + String(latest.update_log).split('\n')[0];
+      }
+      if (latest.apk_url) {
+        btns.forEach(function (b) {
+          b.addEventListener('click', function () { window.open(latest.apk_url, '_blank'); });
+        });
+      } else {
+        setSoon('暂未发布安装包');
+      }
+    })
+    .catch(function () { setSoon('版本检测失败'); });
+})();
+</script>
+
+</body>
+</html>

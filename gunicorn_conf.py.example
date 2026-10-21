@@ -1,0 +1,46 @@
+# -*- coding: utf-8 -*-
+"""gunicorn 生产配置示例。
+
+使用方法：
+    cp gunicorn_conf.py.example gunicorn_conf.py
+    # 编辑下方 raw_env，填入真实值（gunicorn_conf.py 已被 .gitignore 忽略，不会入库）
+    gunicorn -c gunicorn_conf.py app:app
+
+注意：raw_env 中的敏感配置（密码 / 授权码）仅存在于本文件，请勿提交到 Git。
+"""
+
+# 项目目录
+chdir = '/www/wwwroot/your-project'
+
+# 指定进程数
+workers = 1
+
+# 指定每个进程开启的线程数
+threads = 4
+
+# 启动用户
+user = 'root'
+
+# 启动模式
+worker_class = 'sync'
+
+# 绑定的 ip 与端口
+bind = '0.0.0.0:9001'
+
+# 设置进程文件目录（用于停止服务和重启服务，请勿删除）
+pidfile = '/www/wwwroot/your-project/gunicorn.pid'
+
+# 环境变量（部署时必须提供，避免把密钥写进代码）
+raw_env = [
+    'ADMIN_USERNAME=admin',
+    'ADMIN_PASSWORD=change-me',
+    'SMTP_USER=yourname@qq.com',
+    'SMTP_PASS=your-smtp-auth-code',
+]
+
+# 访问日志与错误日志路径
+accesslog = '/www/wwwlogs/python/your-project/gunicorn_access.log'
+errorlog = '/www/wwwlogs/python/your-project/gunicorn_error.log'
+
+# 日志级别：debug / info / warning / error / critical
+loglevel = 'info'

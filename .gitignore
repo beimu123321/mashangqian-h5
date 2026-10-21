@@ -1,0 +1,27 @@
+# 敏感数据与运行时文件（切勿提交）
+data/
+__pycache__/
+*.pyc
+*.pid
+*.log
+.bak*
+_bak*/
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+gunicorn_conf.py
+gunicorn.pid
+
+# 依赖与构建产物
+node_modules/
+*/node_modules/
+web/*/node_modules/
+
+# 编辑器/环境
+.codebuddy/
+.idea/
+.vscode/
+.DS_Store
