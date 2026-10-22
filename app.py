@@ -2,6 +2,7 @@
 """学习通自动签到 - Flask 服务（API 优先 + 站点账号 + 后台 + 工单）"""
 import os
 import time
+import threading
 
 from flask import Flask, request, jsonify, session, send_from_directory, abort, Response
 
@@ -20,8 +21,8 @@ def API_OK(**kw):
     return jsonify({"ok": True, **kw})
 
 
-def API_ERR(msg, code=400):
-    return jsonify({"ok": False, "msg": msg}), code
+def API_ERR(msg, code=400, **kw):
+    return jsonify({"ok": False, "msg": msg, **kw}), code
 
 
 # ---------------- 鉴权辅助 ----------------
@@ -272,9 +273,11 @@ def account_check(acct_id):
     a = owner_account(acct_id)
     res = a.check_now()
     if not res.get("ok"):
-        return API_ERR(res.get("msg") or "检查失败")
+        extra = {"retry_after": res["retry_after"]} if res.get("retry_after") else {}
+        return API_ERR(res.get("msg") or "检查失败", **extra)
     return API_OK(login_ok=res.get("login_ok"), checked=res.get("checked"),
-                  found=res.get("found") or [], msg=res.get("msg"))
+                  found=res.get("found") or [], msg=res.get("msg"),
+                  retry_after=res.get("retry_after"))
 
 
 @app.route("/api/accounts/<acct_id>/records", methods=["GET"])
@@ -516,9 +519,11 @@ def admin_account_check(acct_id):
         return API_ERR("账号不存在", 404)
     res = a.check_now()
     if not res.get("ok"):
-        return API_ERR(res.get("msg") or "检查失败")
+        extra = {"retry_after": res["retry_after"]} if res.get("retry_after") else {}
+        return API_ERR(res.get("msg") or "检查失败", **extra)
     return API_OK(login_ok=res.get("login_ok"), checked=res.get("checked"),
-                  found=res.get("found") or [], msg=res.get("msg"))
+                  found=res.get("found") or [], msg=res.get("msg"),
+                  retry_after=res.get("retry_after"))
 
 
 @app.route("/api/admin/accounts/<acct_id>/logout", methods=["POST"])
@@ -585,6 +590,19 @@ def admin_logs():
 
 # ---------------- 工单后台管理 ----------------
 
+
+def _mail_ticket_reply(uid, tid, subject, message):
+    """异步给工单作者发送「收到回复」提醒邮件。
+    用户绑定了 QQ 邮箱才会收到；未绑定时 send_notify 仅记日志，站内消息不受影响。"""
+    try:
+        core.send_notify(uid, f"工单 #{tid} 收到回复",
+                         email_page("工单回复",
+                                    f"您的工单「{subject}」收到了管理员回复：\n\n"
+                                    f"{message}\n\n"
+                                    f"您可以进入 APP 或网页版的「我的工单」查看详情并继续回复。"))
+    except Exception as e:
+        log(f"工单回复邮件通知异常: {e}", "warn")
+
 @app.route("/api/admin/tickets", methods=["GET"])
 @require_admin
 def admin_ticket_list():
@@ -618,6 +636,13 @@ def admin_ticket_reply(tid):
         MESSAGES.create(t["uid"], "ticket", f"工单 #{tid} 收到回复",
                         f"您的工单「{t.get('subject', '')}」收到了管理员回复：\n\n"
                         f"{data.get('message', '')}", ref_id=tid)
+    except Exception:
+        pass
+    # 邮件通知工单作者（异步，不阻塞回复请求）
+    try:
+        threading.Thread(target=_mail_ticket_reply,
+                         args=(t["uid"], tid, t.get("subject", ""), data.get("message", "")),
+                         daemon=True).start()
     except Exception:
         pass
     if data.get("close_after"):

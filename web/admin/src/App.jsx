@@ -23,7 +23,11 @@ const api = async (path, opts = {}) => {
   })
   let j = {}
   try { j = await res.json() } catch (e) {}
-  if (j && j.ok === false) throw new Error(j.msg || '请求失败')
+  if (j && j.ok === false) {
+    const err = new Error(j.msg || '请求失败')
+    err.payload = j   // 便于调用方读取 retry_after 等附加字段
+    throw err
+  }
   if (!res.ok) throw new Error(j.msg || `HTTP ${res.status}`)
   return j
 }
@@ -332,12 +336,29 @@ function UsersTab({ users, search, setSearch, refresh, msg, onEdit, superAdmin }
 
 // ---------- 学习通账号 ----------
 function AccountsTab({ accounts, refresh, msg, checking, setChecking }) {
+  const [cds, setCds] = useState({})   // acct_id -> 立即检查冷却剩余秒数
+  // 冷却倒计时：每秒对每个在冷却中的账号减一
+  useEffect(() => {
+    const has = Object.values(cds).some(v => v > 0)
+    if (!has) return
+    const timer = setTimeout(() => setCds(m => {
+      const next = {}
+      for (const k in m) if (m[k] > 0) next[k] = m[k] - 1
+      return next
+    }), 1000)
+    return () => clearTimeout(timer)
+  }, [cds])
   const doCheck = async (r) => {
+    if (checking || (cds[r.acct_id] || 0) > 0) return
     setChecking(r.acct_id)
     try {
-      await api(`/api/admin/accounts/${r.acct_id}/check`, { method: 'POST' })
+      const j = await api(`/api/admin/accounts/${r.acct_id}/check`, { method: 'POST' })
       msg.success(`已对 ${r.name || r.acct_id} 触发一次立即检测`)
-    } catch (e) { msg.error(e.message) } finally { setChecking('') }
+      setCds(m => ({ ...m, [r.acct_id]: j.retry_after || 60 }))
+    } catch (e) {
+      if (e.payload && e.payload.retry_after) setCds(m => ({ ...m, [r.acct_id]: e.payload.retry_after }))
+      msg.error(e.message)
+    } finally { setChecking('') }
   }
   const doLogout = async (r) => {
     await api(`/api/admin/accounts/${r.acct_id}/logout`, { method: 'POST' })
@@ -354,7 +375,11 @@ function AccountsTab({ accounts, refresh, msg, checking, setChecking }) {
     { title: '今日需手动', dataIndex: 'manual_today', render: v => v > 0 ? <Tag color="orange">{v}</Tag> : v },
     { title: '操作', render: (_, r) => <Space wrap>
       <Switch checked={r.monitoring} disabled={!r.logged_in} onChange={async v => { await api(`/api/admin/accounts/${r.acct_id}/monitor`, { method: 'POST', body: JSON.stringify({ on: v }) }); refresh() }} />
-      <Button size="small" loading={checking === r.acct_id} disabled={!r.logged_in} onClick={() => doCheck(r)}>立即检查</Button>
+      <Button size="small" loading={checking === r.acct_id}
+        disabled={!r.logged_in || (cds[r.acct_id] || 0) > 0}
+        onClick={() => doCheck(r)}>
+        {(cds[r.acct_id] || 0) > 0 ? `请等待 ${cds[r.acct_id]}s` : '立即检查'}
+      </Button>
       <Popconfirm title="强制下线该账号？监控将暂停，需用户重新扫码。" onConfirm={() => doLogout(r)}><Button size="small" disabled={!r.logged_in}>强制下线</Button></Popconfirm>
       <Popconfirm title="删除该账号？" onConfirm={async () => { await api(`/api/admin/accounts/${r.acct_id}`, { method: 'DELETE' }); msg.success('已删除'); refresh() }}><Button danger size="small">删除</Button></Popconfirm>
     </Space> },

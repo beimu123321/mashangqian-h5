@@ -25,7 +25,11 @@ const api = async (path, opts = {}) => {
   })
   let j = {}
   try { j = await res.json() } catch (e) {}
-  if (j && j.ok === false) throw new Error(j.msg || '请求失败')
+  if (j && j.ok === false) {
+    const err = new Error(j.msg || '请求失败')
+    err.payload = j   // 便于调用方读取 retry_after 等附加字段
+    throw err
+  }
   if (!res.ok) throw new Error(j.msg || `HTTP ${res.status}`)
   return j
 }
@@ -690,6 +694,14 @@ function AuthPage({ onLogin, onRegistered, msgCtx }) {
 function AccountCard({ a, onToggle, onOpen, onRemove, onLogout, onCheck }) {
   const [checking, setChecking] = useState(false)
   const [checkInfo, setCheckInfo] = useState(null)   // {kind:'found'|'error', found?[], text?}
+  const [cd, setCd] = useState(0)                    // 立即检查冷却剩余秒数（与后端一致）
+
+  // 冷却倒计时：每秒减一，归零后自动恢复可点
+  useEffect(() => {
+    if (cd <= 0) return
+    const timer = setTimeout(() => setCd(c => c - 1), 1000)
+    return () => clearTimeout(timer)
+  }, [cd])
   const statusTag = a.need_relogin
     ? <Tag color="error">需重新登录</Tag>
     : a.logged_in
@@ -700,13 +712,16 @@ function AccountCard({ a, onToggle, onOpen, onRemove, onLogout, onCheck }) {
     : a.monitoring ? <Tag color="warning">线程异常</Tag> : <Tag>未监控</Tag>
 
   const runCheck = async () => {
+    if (checking || cd > 0) return
     setChecking(true)
     setCheckInfo(null)
     try {
       const j = await onCheck(a)
       message.success(j.msg || '检查完成')
+      setCd(j.retry_after || 60)
       if (j.found && j.found.length > 0) setCheckInfo({ kind: 'found', found: j.found })
     } catch (e) {
+      if (e.payload && e.payload.retry_after) setCd(e.payload.retry_after)
       message.error(e.message)
       setCheckInfo({ kind: 'error', text: e.message })
     } finally {
@@ -742,9 +757,11 @@ function AccountCard({ a, onToggle, onOpen, onRemove, onLogout, onCheck }) {
         </Space>
         <Space>
           <Button size="small" onClick={() => onOpen(a, 'records')}>查看记录</Button>
-          <Tooltip title="立即验证登录态并扫描一轮全部课程，不等待监控轮询">
+          <Tooltip title="立即验证登录态并扫描一轮全部课程，不等待监控轮询（为防止触发学习通风控，60 秒内可检查一次）">
             <Button size="small" type="primary" ghost icon={<ThunderboltOutlined />}
-              loading={checking} disabled={!a.logged_in} onClick={runCheck}>立即检查</Button>
+              loading={checking} disabled={!a.logged_in || cd > 0} onClick={runCheck}>
+              {cd > 0 ? `请等待 ${cd}s` : '立即检查'}
+            </Button>
           </Tooltip>
         </Space>
       </Space>

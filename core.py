@@ -114,6 +114,9 @@ SMTP_PASS = os.environ.get("SMTP_PASS", "")
 # 可用环境变量 TICKET_NOTIFY_EMAIL 覆盖（生产环境在 gunicorn_conf.py 的 raw_env 中注入）
 TICKET_NOTIFY_EMAIL = os.environ.get("TICKET_NOTIFY_EMAIL", "535919101@qq.com")
 
+# 手动「立即检查」冷却时间（秒）：防止用户连点扫描触发学习通风控
+MANUAL_CHECK_COOLDOWN = 60
+
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -748,6 +751,7 @@ class ChaoxingAccount:
         self.monitor_thread = None
         self.stop_event = threading.Event()
         self.last_check = 0.0
+        self.last_manual_check = 0.0   # 上次手动「立即检查」的时间戳（冷却用）
         self.monitor_rounds = 0
         self.monitor_errors = 0
         self.checking = False
@@ -1088,21 +1092,31 @@ class ChaoxingAccount:
 
     def check_now(self):
         """用户/管理员手动触发一轮完整检测：先验证学习通登录态，再扫描全部启用课程。
+        同一账号两次手动检查之间至少间隔 MANUAL_CHECK_COOLDOWN 秒（防连点触发限频）。
         同步执行并返回结构化结果 dict:
           {"ok": bool,            # 本次检查是否顺利跑完
            "login_ok": bool,      # 学习通登录态是否有效
            "checked": int,        # 实际扫描的课程数
            "found": [ {...} ],    # 本次新检测到并处理的签到活动（含处理结果）
            "need_relogin": bool,  # 是否需要重新登录
+           "retry_after": int,    # 冷却剩余秒数（被限频时）/ 下次可检查间隔（成功时）
            "msg": str}            # 面向用户的结论
         found 项字段: course / activity / type / result / detail
         """
         if self.checking:
             return {"ok": False, "login_ok": None, "checked": 0, "found": [],
                     "msg": "已有一次检查正在进行中，请稍候再试"}
+        since = time.time() - self.last_manual_check
+        if 0 < since < MANUAL_CHECK_COOLDOWN:
+            wait = int(MANUAL_CHECK_COOLDOWN - since) + 1
+            return {"ok": False, "login_ok": None, "checked": 0, "found": [],
+                    "need_relogin": False, "retry_after": wait,
+                    "msg": f"检查太频繁啦，请 {wait} 秒后再试"
+                           f"（频繁刷新可能触发学习通风控）"}
         if self.client is None:
             return {"ok": False, "login_ok": False, "checked": 0, "found": [],
                     "need_relogin": True, "msg": "账号未登录，无法检查（请先扫码登录）"}
+        self.last_manual_check = time.time()
         self.checking = True
         try:
             # 1) 先验证学习通登录态（Cookie 可能已过期，监控线程每 10 分钟才查一次）
@@ -1168,7 +1182,8 @@ class ChaoxingAccount:
             log(f"手动检查完成, 共检测 {len(courses)} 门课程, 新活动 {acts_found} 个",
                 "info", self.owner)
             return {"ok": True, "login_ok": True, "checked": len(courses),
-                    "found": found, "need_relogin": False, "msg": msg}
+                    "found": found, "need_relogin": False, "msg": msg,
+                    "retry_after": MANUAL_CHECK_COOLDOWN}
         finally:
             self.checking = False
 
